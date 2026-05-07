@@ -3,157 +3,129 @@ from pathlib import Path
 import cv2
 import matplotlib.pyplot as plt
 
-# USE FOLDERS — NOT SINGLE FILES
 IMG_DIR = Path("output-new-train/images/test")
 LABEL_DIR = Path("output-new-train/labels/test")
-
 NUM_SAMPLES = 4
 
-
-def yolo_to_boxes(label_path, w, h):
+def read_yolo_boxes(label_path, label_w, label_h):
     boxes = []
-
     with open(label_path, "r") as f:
         for line in f:
-            parts = line.strip().split()
-
-            if len(parts) != 5:
+            p = line.strip().split()
+            if len(p) != 5:
                 continue
 
-            cls, x, y, bw, bh = parts
-            x = float(x)
-            y = float(y)
-            bw = float(bw)
-            bh = float(bh)
+            cls, x, y, bw, bh = p
+            x, y, bw, bh = map(float, [x, y, bw, bh])
 
-            xmin = int((x - bw / 2) * w)
-            ymin = int((y - bh / 2) * h)
-            xmax = int((x + bw / 2) * w)
-            ymax = int((y + bh / 2) * h)
+            xmin = (x - bw / 2) * label_w
+            ymin = (y - bh / 2) * label_h
+            xmax = (x + bw / 2) * label_w
+            ymax = (y + bh / 2) * label_h
 
             boxes.append((cls, xmin, ymin, xmax, ymax))
-
     return boxes
 
+def box_from_points(cls, points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return cls, int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
 
-def rotate_box_90cw(box, w, h):
+def fix_labels_from_90cw_image(box, w, h):
+    # label was made on image rotated 90 CW
     cls, xmin, ymin, xmax, ymax = box
-    return (
-        cls,
-        h - ymax,
-        xmin,
-        h - ymin,
-        xmax
-    )
 
+    points = [
+        (xmin, ymin),
+        (xmax, ymin),
+        (xmax, ymax),
+        (xmin, ymax)
+    ]
 
-def rotate_box_270cw(box, w, h):
+    # inverse of 90 CW image rotation
+    fixed = [(y, h - x) for x, y in points]
+
+    return box_from_points(cls, fixed)
+
+def fix_labels_from_90ccw_image(box, w, h):
+    # label was made on image rotated 90 CCW / 270 CW
     cls, xmin, ymin, xmax, ymax = box
-    return (
-        cls,
-        ymin,
-        w - xmax,
-        ymax,
-        w - xmin
-    )
 
+    points = [
+        (xmin, ymin),
+        (xmax, ymin),
+        (xmax, ymax),
+        (xmin, ymax)
+    ]
+
+    # inverse of 90 CCW image rotation
+    fixed = [(w - y, x) for x, y in points]
+
+    return box_from_points(cls, fixed)
 
 def draw_boxes(img, boxes):
     img = img.copy()
+    h, w = img.shape[:2]
 
     for cls, xmin, ymin, xmax, ymax in boxes:
-        cv2.rectangle(
-            img,
-            (xmin, ymin),
-            (xmax, ymax),
-            (0, 255, 0),
-            2
-        )
+        xmin = max(0, min(w - 1, int(xmin)))
+        ymin = max(0, min(h - 1, int(ymin)))
+        xmax = max(0, min(w - 1, int(xmax)))
+        ymax = max(0, min(h - 1, int(ymax)))
 
-        cv2.putText(
-            img,
-            str(cls),
-            (xmin, max(20, ymin - 5)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2
-        )
+        cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+        cv2.putText(img, str(cls), (xmin, max(20, ymin - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     return img
-
 
 image_paths = []
 for ext in ["*.jpg", "*.jpeg", "*.png"]:
     image_paths.extend(list(IMG_DIR.glob(ext)))
 
 valid_pairs = []
-
 for img_path in image_paths:
     label_path = LABEL_DIR / f"{img_path.stem}.txt"
-
     if label_path.exists():
         valid_pairs.append((img_path, label_path))
 
-print("Images found:", len(image_paths))
-print("Image + label pairs found:", len(valid_pairs))
+print("Pairs found:", len(valid_pairs))
 
-if len(valid_pairs) == 0:
-    print("No matching image/label pairs found. Check your folder paths.")
+samples = random.sample(valid_pairs, min(NUM_SAMPLES, len(valid_pairs)))
 
-else:
-    samples = random.sample(
-        valid_pairs,
-        min(NUM_SAMPLES, len(valid_pairs))
-    )
+for img_path, label_path in samples:
+    img = cv2.imread(str(img_path))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    h, w = img.shape[:2]
 
-    for img_path, label_path in samples:
-        print("Showing:", img_path.name)
+    # normal YOLO label read
+    original_boxes = read_yolo_boxes(label_path, w, h)
 
-        img = cv2.imread(str(img_path))
+    # important: swapped dimensions for 90-degree label space
+    rotated_label_boxes = read_yolo_boxes(label_path, h, w)
 
-        if img is None:
-            print("Could not read image:", img_path)
-            continue
+    fixed_from_90cw = [fix_labels_from_90cw_image(b, w, h) for b in rotated_label_boxes]
+    fixed_from_90ccw = [fix_labels_from_90ccw_image(b, w, h) for b in rotated_label_boxes]
 
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    imgs = [
+        draw_boxes(img, original_boxes),
+        draw_boxes(img, fixed_from_90cw),
+        draw_boxes(img, fixed_from_90ccw),
+    ]
 
-        h, w = img.shape[:2]
+    titles = [
+        "Original labels",
+        "Labels corrected from 90 CW image",
+        "Labels corrected from 90 CCW / 270 CW image",
+    ]
 
-        boxes = yolo_to_boxes(label_path, w, h)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-        original = draw_boxes(img, boxes)
+    for ax, im, title in zip(axes, imgs, titles):
+        ax.imshow(im)
+        ax.set_title(title)
+        ax.axis("off")
 
-        boxes_90 = [
-            rotate_box_90cw(b, w, h)
-            for b in boxes
-        ]
-
-        boxes_270 = [
-            rotate_box_270cw(b, w, h)
-            for b in boxes
-        ]
-
-        img_90 = draw_boxes(img, boxes_90)
-        img_270 = draw_boxes(img, boxes_270)
-
-        fig, axes = plt.subplots(
-            1,
-            3,
-            figsize=(18, 6)
-        )
-
-        axes[0].imshow(original)
-        axes[0].set_title("Original")
-
-        axes[1].imshow(img_90)
-        axes[1].set_title("Rotate Boxes 90 CW")
-
-        axes[2].imshow(img_270)
-        axes[2].set_title("Rotate Boxes 270 CW")
-
-        for ax in axes:
-            ax.axis("off")
-
-        plt.tight_layout()
-        plt.show()
+    plt.suptitle(img_path.name)
+    plt.tight_layout()
+    plt.show()
