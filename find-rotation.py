@@ -1,60 +1,159 @@
-import os
-import shutil
-import xml.etree.ElementTree as ET
+import random
 from pathlib import Path
+import cv2
+import matplotlib.pyplot as plt
 
-IMG_DIR = Path("images")
-XML_DIR = Path("annotations")
+# USE FOLDERS — NOT SINGLE FILES
+IMG_DIR = Path("output-new-train/images/test")
+LABEL_DIR = Path("output-new-train/labels/test")
 
-OUT_IMG_DIR = Path("fixed/images")
-OUT_XML_DIR = Path("fixed/annotations")
+NUM_SAMPLES = 4
 
-OUT_IMG_DIR.mkdir(parents=True, exist_ok=True)
-OUT_XML_DIR.mkdir(parents=True, exist_ok=True)
 
-ROTATION = 90  # use 90 or 270
+def yolo_to_boxes(label_path, w, h):
+    boxes = []
 
-def rotate_box_90cw(xmin, ymin, xmax, ymax, w, h):
-    return h - ymax, xmin, h - ymin, xmax
+    with open(label_path, "r") as f:
+        for line in f:
+            parts = line.strip().split()
 
-def rotate_box_270cw(xmin, ymin, xmax, ymax, w, h):
-    return ymin, w - xmax, ymax, w - xmin
+            if len(parts) != 5:
+                continue
 
-for xml_path in XML_DIR.glob("*.xml"):
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
+            cls, x, y, bw, bh = parts
+            x = float(x)
+            y = float(y)
+            bw = float(bw)
+            bh = float(bh)
 
-    size = root.find("size")
-    w = int(size.find("width").text)
-    h = int(size.find("height").text)
+            xmin = int((x - bw / 2) * w)
+            ymin = int((y - bh / 2) * h)
+            xmax = int((x + bw / 2) * w)
+            ymax = int((y + bh / 2) * h)
 
-    for obj in root.findall("object"):
-        b = obj.find("bndbox")
+            boxes.append((cls, xmin, ymin, xmax, ymax))
 
-        xmin = int(float(b.find("xmin").text))
-        ymin = int(float(b.find("ymin").text))
-        xmax = int(float(b.find("xmax").text))
-        ymax = int(float(b.find("ymax").text))
+    return boxes
 
-        if ROTATION == 90:
-            nxmin, nymin, nxmax, nymax = rotate_box_90cw(xmin, ymin, xmax, ymax, w, h)
-        elif ROTATION == 270:
-            nxmin, nymin, nxmax, nymax = rotate_box_270cw(xmin, ymin, xmax, ymax, w, h)
-        else:
-            raise ValueError("ROTATION must be 90 or 270")
 
-        b.find("xmin").text = str(max(0, nxmin))
-        b.find("ymin").text = str(max(0, nymin))
-        b.find("xmax").text = str(min(w, nxmax))
-        b.find("ymax").text = str(min(h, nymax))
+def rotate_box_90cw(box, w, h):
+    cls, xmin, ymin, xmax, ymax = box
+    return (
+        cls,
+        h - ymax,
+        xmin,
+        h - ymin,
+        xmax
+    )
 
-    tree.write(OUT_XML_DIR / xml_path.name)
 
-    # copy matching image
-    for ext in [".jpg", ".jpeg", ".png"]:
-        img_path = IMG_DIR / f"{xml_path.stem}{ext}"
-        if img_path.exists():
-            shutil.copy(img_path, OUT_IMG_DIR / img_path.name)
-            break
+def rotate_box_270cw(box, w, h):
+    cls, xmin, ymin, xmax, ymax = box
+    return (
+        cls,
+        ymin,
+        w - xmax,
+        ymax,
+        w - xmin
+    )
 
-print("Fixed XMLs saved to:", OUT_XML_DIR)
+
+def draw_boxes(img, boxes):
+    img = img.copy()
+
+    for cls, xmin, ymin, xmax, ymax in boxes:
+        cv2.rectangle(
+            img,
+            (xmin, ymin),
+            (xmax, ymax),
+            (0, 255, 0),
+            2
+        )
+
+        cv2.putText(
+            img,
+            str(cls),
+            (xmin, max(20, ymin - 5)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2
+        )
+
+    return img
+
+
+image_paths = []
+for ext in ["*.jpg", "*.jpeg", "*.png"]:
+    image_paths.extend(list(IMG_DIR.glob(ext)))
+
+valid_pairs = []
+
+for img_path in image_paths:
+    label_path = LABEL_DIR / f"{img_path.stem}.txt"
+
+    if label_path.exists():
+        valid_pairs.append((img_path, label_path))
+
+print("Images found:", len(image_paths))
+print("Image + label pairs found:", len(valid_pairs))
+
+if len(valid_pairs) == 0:
+    print("No matching image/label pairs found. Check your folder paths.")
+
+else:
+    samples = random.sample(
+        valid_pairs,
+        min(NUM_SAMPLES, len(valid_pairs))
+    )
+
+    for img_path, label_path in samples:
+        print("Showing:", img_path.name)
+
+        img = cv2.imread(str(img_path))
+
+        if img is None:
+            print("Could not read image:", img_path)
+            continue
+
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        h, w = img.shape[:2]
+
+        boxes = yolo_to_boxes(label_path, w, h)
+
+        original = draw_boxes(img, boxes)
+
+        boxes_90 = [
+            rotate_box_90cw(b, w, h)
+            for b in boxes
+        ]
+
+        boxes_270 = [
+            rotate_box_270cw(b, w, h)
+            for b in boxes
+        ]
+
+        img_90 = draw_boxes(img, boxes_90)
+        img_270 = draw_boxes(img, boxes_270)
+
+        fig, axes = plt.subplots(
+            1,
+            3,
+            figsize=(18, 6)
+        )
+
+        axes[0].imshow(original)
+        axes[0].set_title("Original")
+
+        axes[1].imshow(img_90)
+        axes[1].set_title("Rotate Boxes 90 CW")
+
+        axes[2].imshow(img_270)
+        axes[2].set_title("Rotate Boxes 270 CW")
+
+        for ax in axes:
+            ax.axis("off")
+
+        plt.tight_layout()
+        plt.show()
