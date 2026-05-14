@@ -170,3 +170,5 @@ else:
         plt.suptitle(img_path.name)
         plt.tight_layout()
         plt.show()
+
+
