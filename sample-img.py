@@ -3,9 +3,9 @@ from pathlib import Path
 import cv2
 import matplotlib.pyplot as plt
 
-# CHANGE THESE IF NEEDED
-IMG_DIR = Path("output-new-train/images/test")
-LABEL_DIR = Path("output-new-train/labels/test")
+# CHANGE THESE
+IMG_DIR = Path("output-new-train/images/train")
+LABEL_DIR = Path("output-new-train/labels/train")
 
 NUM_SAMPLES = 50
 
@@ -31,11 +31,8 @@ def read_yolo_boxes(label_path, label_w, label_h):
 
     return boxes
 
-def fix_270cw_label_boxes(label_path, img_w, img_h):
-    # This is the correction that matched before:
-    # "Labels corrected from 90 CCW / 270 CW image"
 
-    # IMPORTANT: width/height are swapped here
+def fix_270cw_label_boxes(label_path, img_w, img_h):
     raw_boxes = read_yolo_boxes(label_path, img_h, img_w)
 
     fixed_boxes = []
@@ -61,6 +58,7 @@ def fix_270cw_label_boxes(label_path, img_w, img_h):
         fixed_boxes.append((cls, fxmin, fymin, fxmax, fymax))
 
     return fixed_boxes
+
 
 def draw_boxes(img, boxes):
     img = img.copy()
@@ -92,6 +90,8 @@ def draw_boxes(img, boxes):
 
     return img
 
+
+# gather images
 image_paths = []
 
 for ext in ["*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"]:
@@ -109,29 +109,55 @@ print("Images found:", len(image_paths))
 print("Image/label pairs found:", len(pairs))
 
 if len(pairs) == 0:
-    print("No pairs found. Check IMG_DIR and LABEL_DIR.")
+    print("No pairs found. Check paths.")
 
 else:
-    samples = random.sample(pairs, min(NUM_SAMPLES, len(pairs)))
+    samples = random.sample(
+        pairs,
+        min(NUM_SAMPLES, len(pairs))
+    )
+
+    print("\nCOPY THIS LIST:\n")
+
+    file_list = []
+
+    for i, (img_path, label_path) in enumerate(samples, 1):
+        print(f"{i}. {img_path.name}")
+        file_list.append(img_path.name)
+
+    print("\n--- REVIEW STARTING ---\n")
 
     for img_path, label_path in samples:
         img = cv2.imread(str(img_path))
 
         if img is None:
-            print("Could not read image:", img_path)
+            print("Could not read:", img_path)
             continue
 
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         img_h, img_w = img.shape[:2]
 
-        original_boxes = read_yolo_boxes(label_path, img_w, img_h)
-        fixed_270_boxes = fix_270cw_label_boxes(label_path, img_w, img_h)
+        original_boxes = read_yolo_boxes(
+            label_path,
+            img_w,
+            img_h
+        )
+
+        fixed_270_boxes = fix_270cw_label_boxes(
+            label_path,
+            img_w,
+            img_h
+        )
 
         original_img = draw_boxes(img, original_boxes)
         fixed_img = draw_boxes(img, fixed_270_boxes)
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 7))
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=(14, 7)
+        )
 
         axes[0].imshow(original_img)
         axes[0].set_title("Original Labels")
