@@ -8,7 +8,6 @@ from ultralytics import YOLO
 DATASET_DIR = Path("output-new-train").resolve()
 OUT_DIR = Path("full_dataset_sorted").resolve()
 
-
 MODEL_PATH = Path("runs/detect/seed_orientation_checker/weights/best.pt").resolve()
 
 if not MODEL_PATH.exists():
@@ -142,12 +141,16 @@ def score_labels_against_predictions(label_boxes, pred_boxes):
 
     return float(np.mean(scores))
 
-def get_model_predictions(model, img_path):
-    result = model.predict(
-        source=str(img_path),
-        conf=CONF_THRES,
-        verbose=False
-    )[0]
+def get_model_predictions(model, img):
+    try:
+        result = model.predict(
+            source=img,
+            conf=CONF_THRES,
+            verbose=False
+        )[0]
+    except Exception as e:
+        print("Prediction failed:", e)
+        return None
 
     pred_boxes = []
 
@@ -203,7 +206,6 @@ if OUT_DIR.exists():
 (OUT_DIR / "reports").mkdir(parents=True, exist_ok=True)
 
 model = YOLO(str(MODEL_PATH))
-
 report_rows = []
 
 for split in SPLITS:
@@ -225,7 +227,8 @@ for split in SPLITS:
         "manual_review": 0,
         "missing_label": 0,
         "bad_image": 0,
-        "no_model_predictions": 0
+        "no_model_predictions": 0,
+        "prediction_failed": 0
     }
 
     print(f"\nProcessing {split}: {len(image_paths)} images")
@@ -250,10 +253,11 @@ for split in SPLITS:
 
         if img is None:
             counts["bad_image"] += 1
+            save_manual(img_path, label_path, split)
             report_rows.append([
                 split,
                 img_path.name,
-                "bad_image",
+                "manual_review_bad_image",
                 "",
                 "",
                 "",
@@ -263,12 +267,27 @@ for split in SPLITS:
 
         img_h, img_w = img.shape[:2]
 
-        pred_boxes = get_model_predictions(model, img_path)
+        pred_boxes = get_model_predictions(model, img)
+
+        if pred_boxes is None:
+            counts["manual_review"] += 1
+            counts["prediction_failed"] += 1
+            save_manual(img_path, label_path, split)
+            report_rows.append([
+                split,
+                img_path.name,
+                "manual_review_prediction_failed",
+                0,
+                0,
+                0,
+                0
+            ])
+            continue
 
         if REQUIRE_MODEL_DETECTIONS and len(pred_boxes) == 0:
-            save_manual(img_path, label_path, split)
             counts["manual_review"] += 1
             counts["no_model_predictions"] += 1
+            save_manual(img_path, label_path, split)
             report_rows.append([
                 split,
                 img_path.name,
@@ -350,3 +369,12 @@ print("Clean dataset:", OUT_DIR / "clean")
 print("Manual review:", OUT_DIR / "manual_review")
 print("Report:", report_path)
 print("Clean YAML:", clean_yaml)
+
+try:
+    import pandas as pd
+    report = pd.read_csv(report_path)
+    print("\nDecision counts:")
+    print(report["decision"].value_counts())
+except Exception as e:
+    print("Could not show pandas report summary:", e)
+    
