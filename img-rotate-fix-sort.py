@@ -8,6 +8,7 @@ from ultralytics import YOLO
 DATASET_DIR = Path("output-new-train").resolve()
 OUT_DIR = Path("full_dataset_sorted").resolve()
 
+
 MODEL_PATH = Path("runs/detect/seed_orientation_checker/weights/best.pt").resolve()
 
 if not MODEL_PATH.exists():
